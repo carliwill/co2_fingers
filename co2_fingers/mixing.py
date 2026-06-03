@@ -90,9 +90,9 @@ def _load_concentration_field(
     -------
     np.ndarray  shape (H_crop, W_crop), float32 in [0, 1]
     """
-    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise FileNotFoundError(f"Cannot read: {image_path}")
+    from .io import load_image
+    img_bgr = load_image(str(image_path))   # raises FileNotFoundError if missing
+    img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     c = img[crop['y_top']:crop['y_bot'],
             crop['x_left']:crop['x_right']].astype(np.float32) / 255.0
     return 1.0 - c if invert else c
