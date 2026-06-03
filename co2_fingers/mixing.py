@@ -261,3 +261,195 @@ def horizontal_slice_profile(
         "sigma2":          sigma2,
         "t_95pct":         t_95pct,
     }
+
+
+# ---------------------------------------------------------------------------
+# High-level callable functions (config-driven)
+# ---------------------------------------------------------------------------
+
+def _load_inputs(config_path, csv_path, image_dir):
+    """Load config, timestamps, and matched sorted image paths."""
+    import pandas as pd
+    from .config import load_config
+
+    cfg = load_config(config_path)
+    crop = {
+        'y_top':   cfg.crop.y_top,
+        'y_bot':   cfg.crop.y_bot,
+        'x_left':  cfg.crop.x_left,
+        'x_right': cfg.crop.x_right,
+    }
+
+    df_t = pd.read_csv(csv_path, sep=None, engine='python')
+    df_t.columns = df_t.columns.str.strip()
+    fname_to_h = dict(zip(df_t['Filename'], df_t['TimeSinceStart(min)'] / 60.0))
+
+    all_paths = sorted(Path(image_dir).glob('*.JPG'))
+    matched   = [(p, fname_to_h[p.name]) for p in all_paths if p.name in fname_to_h]
+    if not matched:
+        raise ValueError("No images matched timestamps — check CSV Filename column.")
+
+    image_paths = [m[0] for m in matched]
+    times_h     = np.array([m[1] for m in matched])
+    times_sec   = times_h * 3600.0
+    return image_paths, times_h, times_sec, crop, cfg.name
+
+
+def run_sherwood(
+    config_path: str,
+    csv_path: str,
+    image_dir: str,
+    H_m: float = 0.27,
+    D: float = 2e-9,
+    t_bottom_h: float | None = None,
+    smooth_window: int = 10,
+    invert: bool = False,
+) -> dict:
+    """
+    Load images, compute and plot the Sherwood number time series.
+
+    Parameters
+    ----------
+    config_path : str
+        Path to experiment YAML config.
+    csv_path : str
+        Path to timestamp CSV (columns: Filename, TimeSinceStart(min)).
+    image_dir : str
+        Directory of JPG images.
+    H_m : float
+        Aquifer height in metres (default 0.27).
+    D : float
+        CO₂ diffusivity in water m²/s (default 2e-9).
+    t_bottom_h : float or None
+        Hours when first finger hits bottom — drawn as reference line.
+    smooth_window : int
+        Smoothing window in frames before differentiating (default 10).
+    invert : bool
+        Invert pixel intensity if dye darkens with concentration.
+
+    Returns
+    -------
+    dict
+        Full output from :func:`sherwood_number`.
+    """
+    import matplotlib.pyplot as plt
+
+    image_paths, times_h, times_sec, crop, exp_name = _load_inputs(
+        config_path, csv_path, image_dir
+    )
+    print(f"Computing Sherwood number for {exp_name} ({len(image_paths)} frames)...")
+
+    sh = sherwood_number(
+        image_paths, times_sec, crop,
+        H_m=H_m, D=D,
+        smooth_window=smooth_window,
+        invert=invert,
+    )
+
+    fig, ax = plt.subplots(figsize=(13, 4))
+    ax.plot(times_h, sh['Sh'], color='#7eb8f7', lw=1.5, label='Sh(t)')
+    ax.axhline(1, color='gray', ls='--', lw=1, label='Sh = 1 (pure diffusion)')
+    if t_bottom_h is not None:
+        ax.axvline(t_bottom_h, color='#cc2222', lw=1.8,
+                   label=f'First finger hits bottom  ({t_bottom_h} h)')
+    t_peak_h = sh['t_Sh_peak'] / 3600
+    ax.axvline(t_peak_h, color='#7af5a0', lw=1.5, ls='--',
+               label=f'Sh peak = {sh["Sh_peak"]:.2f}  at {t_peak_h:.2f} h')
+    ax.set(xlabel='Time (h)', ylabel='Sh(t)', title=f'{exp_name} — Sherwood Number')
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+    plt.show()
+
+    print(f"Sh peak = {sh['Sh_peak']:.2f}  at  {t_peak_h:.2f} h  ← B→C transition")
+    return sh
+
+
+def run_horizontal_slicing(
+    config_path: str,
+    csv_path: str,
+    image_dir: str,
+    H_m: float = 0.27,
+    t_start_h: float | None = None,
+    n_slices: int = 50,
+    invert: bool = False,
+) -> dict:
+    """
+    Compute and plot horizontal slicing diagnostics (Hovmöller, mixing
+    fraction, spatial variance).
+
+    Parameters
+    ----------
+    config_path : str
+        Path to experiment YAML config.
+    csv_path : str
+        Path to timestamp CSV.
+    image_dir : str
+        Directory of JPG images.
+    H_m : float
+        Aquifer height in metres (default 0.27).
+    t_start_h : float or None
+        Restrict to frames at or after this time (hours). Use your
+        T_BOTTOM_H value to focus on post-fingering mixing.
+    n_slices : int
+        Number of horizontal depth bins (default 50).
+    invert : bool
+        Invert pixel intensity if dye darkens with concentration.
+
+    Returns
+    -------
+    dict
+        Full output from :func:`horizontal_slice_profile`.
+    """
+    import matplotlib.pyplot as plt
+
+    image_paths, times_h, times_sec, crop, exp_name = _load_inputs(
+        config_path, csv_path, image_dir
+    )
+
+    if t_start_h is not None:
+        mask        = times_h >= t_start_h
+        image_paths = [p for p, m in zip(image_paths, mask) if m]
+        times_h     = times_h[mask]
+        times_sec   = times_sec[mask]
+        print(f"Restricting to {len(image_paths)} frames after {t_start_h} h...")
+
+    print(f"Computing horizontal slices for {exp_name} "
+          f"({len(image_paths)} frames, {n_slices} depth bins)...")
+
+    hs = horizontal_slice_profile(
+        image_paths, times_sec, crop,
+        n_slices=n_slices,
+        invert=invert,
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+    fig.suptitle(f'{exp_name} — Late-stage mixing', fontweight='bold')
+
+    axes[0].imshow(
+        hs['C_z_t'], aspect='auto', origin='upper', cmap='Blues',
+        extent=[times_h[0], times_h[-1], H_m, 0],
+    )
+    axes[0].set(xlabel='Time (h)', ylabel='Depth (norm.)', title='C̄(z,t) — Hovmöller')
+
+    axes[1].plot(times_h, hs['mixing_fraction'], color='#7af5a0', lw=2)
+    axes[1].axhline(0.95, color='#f55a5a', ls='--', lw=1, label='95% mixed')
+    if hs['t_95pct'] is not None:
+        t95h = hs['t_95pct'] / 3600
+        axes[1].axvline(t95h, color='#f55a5a', lw=1.5, ls=':',
+                        label=f'95% at {t95h:.2f} h')
+    axes[1].set(xlabel='Time (h)', ylabel='Mixing fraction',
+                title='Mixing progress', ylim=(0, 1.05))
+    axes[1].legend(fontsize=8)
+
+    axes[2].plot(times_h, hs['sigma2'], color='#f7c97e', lw=2)
+    axes[2].set(xlabel='Time (h)', ylabel='σ²(t)',
+                title='Spatial variance → 0 = fully mixed')
+
+    plt.tight_layout()
+    plt.show()
+
+    if hs['t_95pct'] is not None:
+        print(f"95% mixed at t = {hs['t_95pct']/3600:.2f} h")
+    else:
+        print("95% mixing threshold not reached in this window.")
+    return hs

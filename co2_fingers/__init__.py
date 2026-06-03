@@ -34,7 +34,8 @@ from .plotting import (
     plot_time_regimes,
 )
 from .heatmap import build_heatmap_overlay
-from .mixing import diffusion_flux, sherwood_number, horizontal_slice_profile
+from .mixing import (diffusion_flux, sherwood_number, horizontal_slice_profile,
+                     run_sherwood, run_horizontal_slicing)
 from ._registry import FUNCTION_REGISTRY
 
 __version__ = "0.1.0"
@@ -50,5 +51,6 @@ __all__ = [
     "plot_heatmap_overlay", "plot_time_regimes",
     "build_heatmap_overlay",
     "diffusion_flux", "sherwood_number", "horizontal_slice_profile",
+    "run_sherwood", "run_horizontal_slicing",
     "FUNCTION_REGISTRY",
 ]
