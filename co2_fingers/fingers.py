@@ -137,8 +137,8 @@ def measure_finger_widths(
     x_vals: np.ndarray,
     finger_idx: np.ndarray,
     px_per_metre: float,
-    min_width_cm: float = 0.3,
-    max_width_cm: float = 5.0,
+    min_width_cm: float,
+    max_width_cm: float,
 ) -> dict:
     """
     Measure finger widths from shoulder to shoulder, filtering by width range.
